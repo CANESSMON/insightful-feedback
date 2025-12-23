@@ -10,7 +10,8 @@ import {
   Check,
   AlertCircle,
   Filter,
-  X
+  X,
+  BarChart3
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { SentimentCharts } from "@/components/SentimentCharts";
 
 interface ReviewRow {
   reviews: string;
@@ -108,6 +110,7 @@ export function BulkReviewProcessor() {
   const [showOnlyLowConfidence, setShowOnlyLowConfidence] = useState(false);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.7);
   const [absaCategory, setAbsaCategory] = useState("smartphones");
+  const [showCharts, setShowCharts] = useState(true);
   const { toast } = useToast();
 
   const hasUpload = rawRows.length > 0;
@@ -392,6 +395,39 @@ export function BulkReviewProcessor() {
                   <p className={`text-2xl font-semibold ${stat.color}`}>{stat.value}</p>
                 </motion.div>
               ))}
+            </div>
+
+            {/* Charts Toggle & Visualization */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Analytics</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={showCharts}
+                    onCheckedChange={setShowCharts}
+                    id="show-charts"
+                  />
+                  <Label htmlFor="show-charts" className="text-sm text-muted-foreground">
+                    Show charts
+                  </Label>
+                </div>
+              </div>
+              
+              <AnimatePresence>
+                {showCharts && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <SentimentCharts data={processedRows} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Filters */}
