@@ -11,7 +11,8 @@ import {
   AlertCircle,
   Filter,
   X,
-  BarChart3
+  BarChart3,
+  Settings
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,16 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { SentimentCharts } from "@/components/SentimentCharts";
 
+// API Configuration - Update this to match your backend
+const API_CONFIG = {
+  baseUrl: import.meta.env.VITE_API_URL || "http://localhost:5000",
+  endpoints: {
+    predictSingle: "/predict",
+    predictBatch: "/predict-batch",
+    saveCorrection: "/corrections",
+  },
+};
+
 interface ReviewRow {
   reviews: string;
   sentiment: "positive" | "negative" | "neutral";
@@ -36,6 +47,15 @@ interface ReviewRow {
   correctedSentiment?: "positive" | "negative" | "neutral";
   hasChanged?: boolean;
   isSaved?: boolean;
+}
+
+interface PredictionResponse {
+  sentiment: "positive" | "negative" | "neutral";
+  confidence: number;
+}
+
+interface BatchPredictionResponse {
+  predictions: PredictionResponse[];
 }
 
 // Simple CSV parser
@@ -90,16 +110,46 @@ function parseCSV(text: string): Record<string, string>[] {
   });
 }
 
-function simplePredict(text: string): { sentiment: "positive" | "negative" | "neutral"; confidence: number } {
-  const t = text.toLowerCase();
-  if (!t.trim()) return { sentiment: "neutral", confidence: 0.5 };
-  if (/(amazing|great|good|love|excellent|awesome|fantastic|happy|wonderful|perfect)/.test(t)) {
-    return { sentiment: "positive", confidence: 0.88 + Math.random() * 0.1 };
+// API calls to your backend
+async function predictBatch(reviews: string[], category: string): Promise<PredictionResponse[]> {
+  const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.predictBatch}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviews, category }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
   }
-  if (/(terrible|bad|hate|awful|worst|poor|angry|buggy|horrible|disappointing)/.test(t)) {
-    return { sentiment: "negative", confidence: 0.85 + Math.random() * 0.12 };
+  
+  const data: BatchPredictionResponse = await response.json();
+  return data.predictions;
+}
+
+async function predictSingle(review: string, category: string): Promise<PredictionResponse> {
+  const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.predictSingle}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ review, category }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
   }
-  return { sentiment: "neutral", confidence: 0.6 + Math.random() * 0.15 };
+  
+  return response.json();
+}
+
+async function saveCorrection(review: string, originalSentiment: string, correctedSentiment: string): Promise<void> {
+  const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.saveCorrection}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ review, originalSentiment, correctedSentiment }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
 }
 
 export function BulkReviewProcessor() {
@@ -163,26 +213,30 @@ export function BulkReviewProcessor() {
   const processData = async () => {
     setStatus("processing");
     setError("");
-    await new Promise((r) => setTimeout(r, 800));
 
-    const out = rawRows.map((r) => {
-      const p = simplePredict(r.reviews);
-      return {
+    try {
+      const reviews = rawRows.map((r) => r.reviews);
+      const predictions = await predictBatch(reviews, absaCategory);
+
+      const out = rawRows.map((r, i) => ({
         ...r,
-        sentiment: p.sentiment,
-        confidence_score: Number(p.confidence.toFixed(2)),
-        correctedSentiment: p.sentiment,
+        sentiment: predictions[i].sentiment,
+        confidence_score: Number(predictions[i].confidence.toFixed(2)),
+        correctedSentiment: predictions[i].sentiment,
         hasChanged: false,
         isSaved: false,
-      };
-    });
-    
-    setProcessedRows(out);
-    setStatus("done");
-    toast({
-      title: "Processing complete",
-      description: `Analyzed ${out.length} reviews`,
-    });
+      }));
+
+      setProcessedRows(out);
+      setStatus("done");
+      toast({
+        title: "Processing complete",
+        description: `Analyzed ${out.length} reviews`,
+      });
+    } catch (err: any) {
+      setError(err.message || "Failed to process reviews. Check backend connection.");
+      setStatus("uploaded");
+    }
   };
 
   const filteredRows = useMemo(() => {
@@ -212,19 +266,32 @@ export function BulkReviewProcessor() {
     const actualIndex = processedRows.findIndex((r) => r === filteredRows[index]);
     if (actualIndex === -1) return;
     
-    // Simulate API call
-    await new Promise((r) => setTimeout(r, 300));
+    const row = processedRows[actualIndex];
     
-    setProcessedRows((prev) =>
-      prev.map((r, idx) =>
-        idx === actualIndex ? { ...r, hasChanged: false, isSaved: true } : r
-      )
-    );
-    
-    toast({
-      title: "Correction saved",
-      description: "Your feedback helps improve the model",
-    });
+    try {
+      await saveCorrection(
+        row.reviews,
+        row.sentiment,
+        row.correctedSentiment || row.sentiment
+      );
+      
+      setProcessedRows((prev) =>
+        prev.map((r, idx) =>
+          idx === actualIndex ? { ...r, hasChanged: false, isSaved: true } : r
+        )
+      );
+      
+      toast({
+        title: "Correction saved",
+        description: "Your feedback helps improve the model",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to save",
+        description: err.message || "Could not save correction",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleDownloadResults = () => {
